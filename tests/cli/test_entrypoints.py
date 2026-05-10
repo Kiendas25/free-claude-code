@@ -3,7 +3,8 @@
 import subprocess
 import tomllib
 from pathlib import Path
-from unittest.mock import patch
+from types import SimpleNamespace
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -115,6 +116,41 @@ def test_cli_scripts_are_registered() -> None:
     assert scripts["fcc-server"] == "cli.entrypoints:serve"
     assert scripts["free-claude-code"] == "cli.entrypoints:serve"
     assert scripts["fcc-claude"] == "cli.entrypoints:launch_claude"
+
+
+def test_serve_supervisor_restarts_when_app_requests_restart() -> None:
+    from cli import entrypoints
+
+    settings = _launcher_settings()
+    get_settings = MagicMock(side_effect=[settings, settings])
+    get_settings.cache_clear = MagicMock()
+    servers: list[object] = []
+
+    class FakeServer:
+        def __init__(self, config):
+            self.config = config
+            self.should_exit = False
+            servers.append(self)
+
+        def run(self):
+            if len(servers) == 1:
+                self.config.app.app.state.admin_restart_callback()
+                assert self.should_exit is True
+
+    def fake_config(app, **kwargs):
+        return SimpleNamespace(app=app, kwargs=kwargs)
+
+    with (
+        patch.object(entrypoints, "get_settings", get_settings),
+        patch.object(entrypoints.uvicorn, "Config", side_effect=fake_config),
+        patch.object(entrypoints.uvicorn, "Server", side_effect=FakeServer),
+        patch.object(entrypoints, "kill_all_best_effort") as kill_all,
+    ):
+        entrypoints.serve()
+
+    assert len(servers) == 2
+    get_settings.cache_clear.assert_called_once()
+    kill_all.assert_called_once()
 
 
 def test_claude_child_env_targets_current_proxy_config() -> None:

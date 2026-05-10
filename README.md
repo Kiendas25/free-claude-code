@@ -302,13 +302,7 @@ For terminal use, prefer the installed launcher:
 fcc-claude
 ```
 
-It points Claude Code at the configured local proxy and refreshes the port/token from config on every new launch. If you change `PORT`, restart `fcc-server` before opening a new Claude Code session.
-
-For manual setup, point `ANTHROPIC_BASE_URL` at the proxy root. Do not append `/v1`. Use the same `ANTHROPIC_AUTH_TOKEN` you configured in the Admin UI.
-
-```bash
-ANTHROPIC_AUTH_TOKEN="freecc" ANTHROPIC_BASE_URL="http://localhost:8082" CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY=1 claude
-```
+Keep `fcc-server` running while you work. The Admin UI manages proxy config, restarts the server when runtime settings change, and `fcc-claude` reads the current Admin UI-managed port and auth token every time it starts.
 
 ### VS Code Extension
 

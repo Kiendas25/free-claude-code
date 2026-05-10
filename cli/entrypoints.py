@@ -10,11 +10,16 @@ from pathlib import Path
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
+import uvicorn
+
 from api.admin_urls import local_proxy_root_url
+from api.app import GracefulLifespanApp, create_app
+from cli.process_registry import kill_all_best_effort
 from config.settings import Settings, get_settings
 
 PROXY_PREFLIGHT_PATH = "/health"
 PROXY_PREFLIGHT_TIMEOUT_SECONDS = 1.5
+SERVER_GRACEFUL_SHUTDOWN_SECONDS = 5
 
 
 def _load_env_template() -> str:
@@ -34,22 +39,42 @@ def _load_env_template() -> str:
 
 def serve() -> None:
     """Start the FastAPI server (registered as `fcc-server` script)."""
-    import uvicorn
-
-    from cli.process_registry import kill_all_best_effort
-
-    settings = get_settings()
     try:
-        uvicorn.run(
-            "api.app:create_asgi_app",
-            factory=True,
-            host=settings.host,
-            port=settings.port,
-            log_level="debug",
-            timeout_graceful_shutdown=5,
-        )
+        while True:
+            settings = get_settings()
+            if not _run_supervised_server(settings):
+                return
+            get_settings.cache_clear()
     finally:
         kill_all_best_effort()
+
+
+def _run_supervised_server(settings: Settings) -> bool:
+    """Run one uvicorn server instance; return whether admin requested restart."""
+
+    restart_requested = False
+    server_holder: dict[str, uvicorn.Server] = {}
+
+    def request_restart() -> None:
+        nonlocal restart_requested
+        restart_requested = True
+        if server := server_holder.get("server"):
+            server.should_exit = True
+
+    app = create_app(lifespan_enabled=False)
+    app.state.admin_restart_callback = request_restart
+    asgi_app = GracefulLifespanApp(app)
+    config = uvicorn.Config(
+        asgi_app,
+        host=settings.host,
+        port=settings.port,
+        log_level="debug",
+        timeout_graceful_shutdown=SERVER_GRACEFUL_SHUTDOWN_SECONDS,
+    )
+    server = uvicorn.Server(config)
+    server_holder["server"] = server
+    server.run()
+    return restart_requested
 
 
 def init() -> None:
